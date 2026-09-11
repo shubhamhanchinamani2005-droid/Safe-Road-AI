@@ -3,7 +3,6 @@ name: Build Android APK
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions:
@@ -46,35 +45,35 @@ jobs:
       - name: Build Android Debug APK
         run: |
           cd frontend/android
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle_output.log || {
-            echo "====================== GRADLE ERROR LOG ======================"
-            tail -n 120 /tmp/gradle_output.log
-            echo "=============================================================="
-            exit 1
-          }
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: List Generated APK Files
+      - name: Locate and Stage APK
         run: |
-          find frontend/android -name "*.apk"
+          mkdir -p release_apk
+          find frontend/android -name "*.apk" -exec cp {} release_apk/SafeRoadAI.apk \;
+          echo "=== Found APKs ==="
+          ls -lh release_apk/
 
-      - name: Upload SafeRoad AI APK Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: SafeRoadAI-debug.apk
-          path: frontend/android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          path: release_apk/SafeRoadAI.apk
           retention-days: 14
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish Public GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: frontend/android/app/build/outputs/apk/debug/*.apk
-          name: SafeRoad AI Standalone App ${{ github.ref_name }}
+          files: release_apk/SafeRoadAI.apk
+          tag_name: latest
+          name: "SafeRoad AI Standalone App (Latest APK)"
           body: |
             ### SafeRoad AI Standalone Mobile App (Android APK)
-            - **100% Offline**: Runs with no PC, no server, and no Wi-Fi.
-            - **On-Device AI**: Computer vision road damage detection.
-            - **Continuous GPS**: Real-time road hazard tracking.
+            Click **SafeRoadAI.apk** below under Assets to download directly!
+            
+            - **100% Offline**: Runs on your phone with zero server, PC, or Wi-Fi needed.
+            - **On-Device Computer Vision**: Potholes and cracks are scanned locally in ~50ms.
+            - **Continuous GPS**: Real-time road hazard tracking and geofencing.
+            - **Local Database**: Stores reports and repairs on your device.
           draft: false
           prerelease: false
