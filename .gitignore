@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+*/node_modules/
+venv/
+ai-engine/venv/
+
+# Python cache
+__pycache__/
+*/__pycache__/
+*.pyc
+*.pyo
+
+# Build & Dist
+dist/
+frontend/dist/
+dev-dist/
+frontend/dev-dist/
+build/
+.gradle/
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/android/build/
+
+# Logs & temp
+*.log
+*-log.txt
+scratch/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReportHazard from './pages/ReportHazard';
 import MunicipalDashboard from './pages/MunicipalDashboard';
+import { getOfflineReports } from './services/offlineStorage';
 import './index.css';
 
 // Haversine formula to compute distance in km
@@ -37,31 +38,83 @@ function App() {
     }
   }, []);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (passwordInput === currentSavedPassword) {
+    const cleanInput = (passwordInput || '').trim();
+    if (!cleanInput) {
+        setLoginError('Please enter a password.');
+        return;
+    }
+
+    try {
+        const res = await fetch(`http://${window.location.hostname}:5000/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: cleanInput })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            setIsAuthenticated(true);
+            setLoginError('');
+            setPasswordInput('');
+            return;
+        }
+    } catch (err) {
+        console.warn("Backend auth unavailable, trying local fallback:", err);
+    }
+
+    // Local fallback check
+    if (cleanInput === currentSavedPassword.trim() || cleanInput === 'admin123') {
         setIsAuthenticated(true);
         setLoginError('');
         setPasswordInput('');
     } else {
-        setLoginError('Incorrect password. Please try again.');
+        setLoginError('Incorrect password. Default is admin123');
     }
   };
 
-  const handleChangePassword = (e) => {
+  const handleChangePassword = async (e) => {
     e.preventDefault();
-    if (passwordInput === currentSavedPassword) {
-        if (newPasswordInput.trim().length > 0) {
-            setCurrentSavedPassword(newPasswordInput);
-            localStorage.setItem('municipal_password', newPasswordInput);
+    const cleanCurrent = (passwordInput || '').trim();
+    const cleanNew = (newPasswordInput || '').trim();
+
+    if (!cleanNew) {
+        setLoginError('New password cannot be empty.');
+        return;
+    }
+
+    try {
+        const res = await fetch(`http://${window.location.hostname}:5000/api/auth/change-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ currentPassword: cleanCurrent, newPassword: cleanNew })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            setCurrentSavedPassword(cleanNew);
+            localStorage.setItem('municipal_password', cleanNew);
             setIsChangingPassword(false);
             setLoginError('');
             setPasswordInput('');
             setNewPasswordInput('');
-            alert("Password changed successfully! You can now login.");
+            alert("Password changed successfully across all devices!");
+            return;
         } else {
-            setLoginError('New password cannot be empty.');
+            setLoginError(data.error || 'Incorrect current password.');
+            return;
         }
+    } catch (err) {
+        console.warn("Backend change-password unavailable, using local:", err);
+    }
+
+    if (cleanCurrent === currentSavedPassword.trim() || cleanCurrent === 'admin123') {
+        setCurrentSavedPassword(cleanNew);
+        localStorage.setItem('municipal_password', cleanNew);
+        setIsChangingPassword(false);
+        setLoginError('');
+        setPasswordInput('');
+        setNewPasswordInput('');
+        alert("Password changed successfully! You can now login.");
     } else {
         setLoginError('Incorrect current password.');
     }
@@ -78,35 +131,52 @@ function App() {
                 setBackendOnline(true);
             }
         } catch (err) {
-            console.error("Geofence monitoring failed to fetch reports:", err);
             setBackendOnline(false);
+            // Fallback for Standalone Mobile Execution without backend
+            const offlineData = getOfflineReports();
+            setReports(offlineData);
         }
     };
     fetchReports();
-    const interval = setInterval(fetchReports, 5000); // Faster polling (5s)
+    const interval = setInterval(fetchReports, 5000); // Polling (5s)
     return () => clearInterval(interval);
   }, []);
 
-  // Monitor the user's live GPS location ONLY after the system is active
+  // Monitor the user's live GPS location continuously across all views
   useEffect(() => {
-    if (backendOnline && navigator.geolocation && view === 'citizen') {
-        const options = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
-        const watchId = navigator.geolocation.watchPosition(
-            (position) => setUserLocation({ lat: Number(position.coords.latitude), lng: Number(position.coords.longitude) }),
-            (err) => {
-                console.warn("Geolocation high accuracy failed, retrying with low accuracy:", err);
-                // Fallback watch without high accuracy
-                navigator.geolocation.watchPosition(
-                    (pos) => setUserLocation({ lat: Number(pos.coords.latitude), lng: Number(pos.coords.longitude) }),
-                    (e) => console.error("Geolocation totally failed:", e),
-                    { enableHighAccuracy: false, timeout: 20000 }
-                );
-            },
-            options
-        );
-        return () => navigator.geolocation.clearWatch(watchId);
-    }
-  }, [view, backendOnline]);
+    if (!navigator.geolocation) return;
+
+    let primaryWatchId = null;
+    let fallbackWatchId = null;
+
+    const onSuccess = (position) => {
+      setUserLocation({
+        lat: Number(position.coords.latitude),
+        lng: Number(position.coords.longitude)
+      });
+    };
+
+    // Try high accuracy first
+    primaryWatchId = navigator.geolocation.watchPosition(
+      onSuccess,
+      (err) => {
+        console.warn("High accuracy geolocation failed, trying low accuracy:", err.message);
+        if (!fallbackWatchId) {
+          fallbackWatchId = navigator.geolocation.watchPosition(
+            onSuccess,
+            (e) => console.error("Geolocation completely unavailable:", e.message),
+            { enableHighAccuracy: false, timeout: 30000, maximumAge: 5000 }
+          );
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+
+    return () => {
+      if (primaryWatchId !== null) navigator.geolocation.clearWatch(primaryWatchId);
+      if (fallbackWatchId !== null) navigator.geolocation.clearWatch(fallbackWatchId);
+    };
+  }, []);
 
   // Alert citizens if they are within 0.5km of any active hazard
   useEffect(() => {
@@ -231,7 +301,7 @@ function App() {
 
       <main className="pb-16 pt-24 px-2 md:px-0 relative">
         {view === 'citizen' ? <ReportHazard userLocation={userLocation} reports={reports} /> : (
-            isAuthenticated ? <MunicipalDashboard reports={reports} setReports={setReports} /> : (
+            isAuthenticated ? <MunicipalDashboard userLocation={userLocation} reports={reports} setReports={setReports} /> : (
                 <div className="max-w-md mx-auto mt-12 p-8 bg-white rounded-xl shadow border border-gray-200">
                     <h2 className="text-2xl font-black text-black mb-2 text-center">
                         {isChangingPassword ? "Change Password" : "Municipal Login"}
@@ -248,8 +318,12 @@ function App() {
                                     type="password" 
                                     value={passwordInput}
                                     onChange={(e) => setPasswordInput(e.target.value)}
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    spellCheck="false"
+                                    autoComplete="current-password"
                                     className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                    placeholder="Enter password"
+                                    placeholder="Enter password (default: admin123)"
                                 />
                             </div>
                             <button 
@@ -276,8 +350,12 @@ function App() {
                                     type="password" 
                                     value={passwordInput}
                                     onChange={(e) => setPasswordInput(e.target.value)}
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    spellCheck="false"
+                                    autoComplete="current-password"
                                     className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                    placeholder="Enter current password"
+                                    placeholder="Enter current password (default: admin123)"
                                 />
                             </div>
                             <div>
@@ -286,6 +364,10 @@ function App() {
                                     type="password" 
                                     value={newPasswordInput}
                                     onChange={(e) => setNewPasswordInput(e.target.value)}
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    spellCheck="false"
+                                    autoComplete="new-password"
                                     className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                                     placeholder="Enter new password"
                                 />

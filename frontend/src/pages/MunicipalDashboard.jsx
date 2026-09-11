@@ -1,81 +1,78 @@
 import React, { useEffect, useState } from 'react';
 import LiveRiskMap from '../components/LiveRiskMap';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
+import { updateOfflineReportStatus, deleteOfflineReport } from '../services/offlineStorage';
 
-const MunicipalDashboard = ({ reports = [], setReports }) => {
-    const [userLocation, setUserLocation] = useState(null);
-    const [isLocating, setIsLocating] = useState(false);
+const MunicipalDashboard = ({ userLocation = null, reports = [], setReports }) => {
     const [selectedImage, setSelectedImage] = useState(null);
-    const [workOrder, setWorkOrder] = useState(null);
+    const [focusedHazardLocation, setFocusedHazardLocation] = useState(null);
+    const [activeProximityAlerts, setActiveProximityAlerts] = useState([]);
 
-    const getLocation = () => {
-        // If we already have a live location from the parent (App.jsx), use it instantly!
+    // Calculate proximity to danger zones for municipal workers
+    useEffect(() => {
         if (userLocation && userLocation.lat && userLocation.lng) {
-            setUserLocation({ lat: Number(userLocation.lat), lng: Number(userLocation.lng) });
-            setIsLocating(false);
-            return;
+            const nearby = reports.filter(r => {
+                if (!r.location || !r.location.coordinates) return false;
+                if (r.status === 'Repaired' || r.status === 'Outdated') return false;
+                const [lng, lat] = [Number(r.location.coordinates[0]), Number(r.location.coordinates[1])];
+                const dist = getDistKm(userLocation.lat, userLocation.lng, lat, lng);
+                return dist <= 0.5; // Within 500m danger zone
+            });
+            setActiveProximityAlerts(nearby);
         }
+    }, [userLocation, reports]);
 
-        if (navigator.geolocation) {
-            setIsLocating(true);
-            const options = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
-            
-            const success = (position) => {
-                setUserLocation({ lat: Number(position.coords.latitude), lng: Number(position.coords.longitude) });
-                setIsLocating(false);
-            };
-
-            const error = (err) => {
-                console.warn("High accuracy failed, trying low accuracy...", err);
-                navigator.geolocation.getCurrentPosition(
-                    (pos) => {
-                        setUserLocation({ lat: Number(pos.coords.latitude), lng: Number(pos.coords.longitude) });
-                        setIsLocating(false);
-                    },
-                    (e) => {
-                        console.error("Geolocation error:", e);
-                        alert(`Could not get location: ${e.message}`);
-                        setIsLocating(false);
-                    },
-                    { enableHighAccuracy: false, timeout: 20000 }
-                );
-            };
-
-            navigator.geolocation.getCurrentPosition(success, error, options);
-        } else {
-            alert("Geolocation is not supported by this browser.");
-        }
-    };
+    function getDistKm(lat1, lon1, lat2, lon2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * (Math.PI / 180);
+        const dLon = (lon2 - lon1) * (Math.PI / 180);
+        const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+            Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
 
     // Internal fetch removed; reports are passed as props from App.jsx
 
     const handleDelete = async (id) => {
         if (!window.confirm("Are you sure you want to delete this reported hazard?")) return;
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/reports/${id}`, { method: 'DELETE' });
+            const res = await fetch(`http://${window.location.hostname}:5000/api/reports/${id}`, { 
+                method: 'DELETE',
+                signal: AbortSignal.timeout(3000)
+            });
             if (res.ok) {
                 setReports(prev => prev.filter(r => r._id !== id));
+                deleteOfflineReport(id);
+                return;
             }
         } catch (err) {
-            console.error("Failed to delete", err);
+            console.warn("Backend unavailable, deleting from local device storage:", err);
         }
+        deleteOfflineReport(id);
+        setReports(prev => prev.filter(r => r._id !== id));
     };
 
     const handleRepair = async (id) => {
         if (!window.confirm("Are you sure you want to mark this hazard as repaired?")) return;
         try {
             const res = await fetch(`http://${window.location.hostname}:5000/api/reports/${id}/repair`, {
-                method: 'PATCH'
+                method: 'PATCH',
+                signal: AbortSignal.timeout(3000)
             });
             if (res.ok) {
                 const data = await res.json();
                 if (data.success && data.report) {
                     setReports(prev => prev.map(r => r._id === id ? data.report : r));
+                    updateOfflineReportStatus(id, 'Repaired');
+                    return;
                 }
             }
         } catch (err) {
-            console.error("Failed to repair", err);
+            console.warn("Backend unavailable, marking repaired in local device storage:", err);
         }
+        updateOfflineReportStatus(id, 'Repaired');
+        setReports(prev => prev.map(r => r._id === id ? { ...r, status: 'Repaired' } : r));
     };
 
     // Dynamically calculate trend data from real reports
@@ -160,23 +157,56 @@ const MunicipalDashboard = ({ reports = [], setReports }) => {
             </div>
 
             <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 mb-8">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold text-slate-900">Live Risk Map Overview</h2>
-                    <div className="flex items-center gap-3">
-                        <button 
-                            type="button" 
-                            onClick={getLocation}
-                            disabled={isLocating}
-                            className={`px-4 py-1.5 text-white rounded cursor-pointer text-xs font-bold uppercase tracking-wide transition-colors shadow-sm ${
-                                userLocation ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'
-                            } ${isLocating ? 'opacity-70 cursor-wait' : ''}`}
-                        >
-                            {isLocating ? 'Capturing...' : (userLocation ? 'Location Active' : 'Capture Location')}
-                        </button>
-                        <span className="bg-green-100 text-green-800 text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-wide">Live</span>
+                {/* Proximity Alert Banner */}
+                {activeProximityAlerts.length > 0 && (
+                    <div className="mb-4 p-4 rounded-xl border border-red-300 bg-red-50 text-red-900 flex items-start gap-3 shadow-sm animate-pulse">
+                        <span className="text-2xl">⚠️</span>
+                        <div>
+                            <p className="font-bold text-sm">PROXIMITY WARNING: Within Danger Zone</p>
+                            <p className="text-xs mt-0.5 text-red-700">
+                                Your device is currently within <strong>500m</strong> of {activeProximityAlerts.length} active hazard zone(s) ({activeProximityAlerts.map(a => a.damage_type).join(', ')}). Proceed with caution.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                    <div>
+                        <h2 className="text-2xl font-bold text-slate-900">Live Risk & Danger Zone Map</h2>
+                        <p className="text-xs text-gray-500 mt-1">Real-time GPS tracking of municipal inspection device & active hazard perimeters.</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {userLocation ? (
+                            <span className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                                📍 Live GPS: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-1.5 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm">
+                                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                                Waiting for Device GPS...
+                            </span>
+                        )}
+                        <span className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-wide">Live Feed</span>
                     </div>
                 </div>
-                <LiveRiskMap defaultCenter={[28.6139, 77.2090]} userLocation={userLocation} reports={reports} />
+
+                {/* Map Legend */}
+                <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-gray-600 bg-gray-50 p-2.5 rounded-lg border border-gray-200 mb-2">
+                    <span className="text-gray-400 font-bold uppercase text-[10px] tracking-wider">Perimeters:</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-600"></span> Your Live Position</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500"></span> Red Danger Zone (High Visual Severity)</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-yellow-400"></span> Yellow Zone (Medium Visual Severity)</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500"></span> Green Zone (Low Visual Severity)</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-black"></span> Repaired (Resolved)</span>
+                </div>
+
+                <LiveRiskMap 
+                    defaultCenter={[28.6139, 77.2090]} 
+                    userLocation={userLocation} 
+                    hazardLocation={focusedHazardLocation} 
+                    reports={reports} 
+                />
             </div>
 
             <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
@@ -187,19 +217,31 @@ const MunicipalDashboard = ({ reports = [], setReports }) => {
                             <tr>
                                 <th className="px-6 py-4 font-semibold text-gray-600">Damage Type</th>
                                 <th className="px-6 py-4 font-semibold text-gray-600">Location (Lat, Lng)</th>
-                                <th className="px-6 py-4 font-semibold text-gray-600">Severity</th>
+                                <th className="px-6 py-4 font-semibold text-gray-600">Visual Severity</th>
                                 <th className="px-6 py-4 font-semibold text-gray-600">Status</th>
                                 <th className="px-6 py-4 font-semibold text-gray-600">Risk Score</th>
-                                <th className="px-6 py-4 font-semibold text-gray-600">Category</th>
+                                <th className="px-6 py-4 font-semibold text-gray-600">Danger Zone</th>
                                 <th className="px-6 py-4 font-semibold text-gray-600">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 bg-white">
                             {reports.sort((a,b) => b.risk_score - a.risk_score).slice(0, 10).map((r, i) => (
                                 <tr key={r._id || i} className="hover:bg-indigo-50 transition-colors">
-                                    <td className="px-6 py-4 font-medium text-gray-900">{r.damage_type}</td>
+                                    <td className="px-6 py-4 font-medium text-gray-900">
+                                        <div className="flex flex-col">
+                                            <span className="font-bold text-gray-900">{r.damage_type}</span>
+                                            {r.ai_confidence ? (
+                                                <span className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1">
+                                                    ✓ AI Verified ({Math.round(r.ai_confidence * 100)}%)
+                                                    {r.ai_metrics?.estimated_size_cm && ` • ~${r.ai_metrics.estimated_size_cm}cm`}
+                                                </span>
+                                            ) : (
+                                                <span className="text-[10px] text-gray-500">Standard Report</span>
+                                            )}
+                                        </div>
+                                    </td>
                                     <td className="px-6 py-4 text-gray-600">{r.location?.coordinates[1]?.toFixed(4)}, {r.location?.coordinates[0]?.toFixed(4)}</td>
-                                    <td className="px-6 py-4 text-gray-600">{r.severity}</td>
+                                    <td className="px-6 py-4 font-semibold text-gray-800">{r.severity}</td>
                                     <td className="px-6 py-4">
                                         <div className="flex flex-col gap-1">
                                             <span className="font-bold text-gray-900">{r.status}</span>
@@ -213,11 +255,25 @@ const MunicipalDashboard = ({ reports = [], setReports }) => {
                                               r.risk_category === 'Red' ? 'bg-red-100 text-red-800 border border-red-200' : 
                                               r.risk_category === 'Yellow' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' : 
                                               'bg-green-100 text-green-800 border border-green-200'}`}>
-                                            {r.risk_category}
+                                            {r.risk_category === 'Red' ? '🔴 Red Zone' : (r.risk_category === 'Yellow' ? '🟡 Yellow Zone' : (r.risk_category === 'Black' ? '⚫ Repaired' : '🟢 Green Zone'))}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex gap-2">
+                                            {r.location?.coordinates && (
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const lat = Number(r.location.coordinates[1]);
+                                                        const lng = Number(r.location.coordinates[0]);
+                                                        setFocusedHazardLocation({ lat, lng });
+                                                        window.scrollTo({ top: 400, behavior: 'smooth' });
+                                                    }}
+                                                    className="text-purple-700 hover:text-purple-900 font-semibold text-xs uppercase tracking-wide cursor-pointer bg-purple-50 hover:bg-purple-100 border border-purple-200 px-3 py-1.5 rounded-md transition-colors shadow-sm"
+                                                >
+                                                    Locate
+                                                </button>
+                                            )}
                                             <button 
                                                 onClick={() => setSelectedImage(r.image_url)}
                                                 className="text-blue-600 hover:text-blue-900 font-semibold text-xs uppercase tracking-wide cursor-pointer bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-md transition-colors shadow-sm"

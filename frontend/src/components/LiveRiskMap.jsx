@@ -17,13 +17,44 @@ const customIcon = (color) => {
   });
 };
 
-const MapUpdater = ({ userLocation }) => {
+// Haversine helper for distance check
+function getDistKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const MapUpdater = ({ userLocation, hazardLocation }) => {
   const map = useMap();
+  const [hasCentered, setHasCentered] = React.useState(false);
+
+  // If a specific hazard was clicked to locate, smoothly fly to it
   useEffect(() => {
-    if (userLocation) {
-      map.flyTo([userLocation.lat, userLocation.lng], 14, { animate: true });
+    if (hazardLocation && hazardLocation.lat && hazardLocation.lng) {
+      map.flyTo([hazardLocation.lat, hazardLocation.lng], 16, { animate: true, duration: 1.2 });
     }
-  }, [userLocation, map]);
+  }, [hazardLocation, map]);
+
+  useEffect(() => {
+    if (!userLocation) return;
+
+    if (!hasCentered && (!hazardLocation || !hazardLocation.lat)) {
+      // First location — center immediately
+      map.flyTo([userLocation.lat, userLocation.lng], 15, { animate: true, duration: 1 });
+      setHasCentered(true);
+    } else if (hasCentered && (!hazardLocation || !hazardLocation.lat)) {
+      // Only re-center if user moved >200m from current map center
+      const center = map.getCenter();
+      const dist = getDistKm(center.lat, center.lng, userLocation.lat, userLocation.lng);
+      if (dist > 0.2) {
+        map.flyTo([userLocation.lat, userLocation.lng], map.getZoom(), { animate: true, duration: 1.5 });
+      }
+    }
+  }, [userLocation, map, hasCentered, hazardLocation]);
   return null;
 };
 
@@ -36,7 +67,7 @@ const LiveRiskMap = ({ defaultCenter = [40.7128, -74.0060], userLocation = null,
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           maxZoom={19}
         />
-        {userLocation && <MapUpdater userLocation={userLocation} />}
+        <MapUpdater userLocation={userLocation} hazardLocation={hazardLocation} />
         
         {userLocation && (
           <Marker position={[userLocation.lat, userLocation.lng]} icon={customIcon('blue')} zIndexOffset={1000}>

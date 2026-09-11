@@ -17,6 +17,9 @@ const ReportSchema = new mongoose.Schema({
     severity: { type: String, enum: ['Low', 'Medium', 'High'], required: true },
     risk_score: { type: Number, required: true },
     risk_category: { type: String, enum: ['Green', 'Yellow', 'Red', 'Black'], required: true },
+    ai_confidence: { type: Number, required: false },
+    ai_metrics: { type: mongoose.Schema.Types.Mixed, required: false },
+    is_duplicate: { type: Boolean, default: false },
     status: { type: String, enum: ['Pending', 'Reviewed', 'Repaired'], default: 'Pending' }
 }, { timestamps: true });
 
