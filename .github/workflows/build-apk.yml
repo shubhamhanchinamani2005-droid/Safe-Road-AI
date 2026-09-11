@@ -41,10 +41,11 @@ jobs:
           cd frontend
           npm run build
 
-      - name: Sync Capacitor Android
+      - name: Copy Web Assets & Plugins to Android
         run: |
           cd frontend
-          npx cap sync android
+          npx cap copy android
+          npx cap update android
 
       - name: Build Android Debug APK
         run: |
