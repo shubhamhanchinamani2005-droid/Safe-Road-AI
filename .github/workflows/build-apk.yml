@@ -3,7 +3,11 @@ name: Build Android APK
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-apk:
@@ -39,13 +43,7 @@ jobs:
       - name: Build Android Debug APK
         run: |
           cd frontend/android
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build_output.log || {
-            echo "### ❌ Gradle Build Error Details" >> $GITHUB_STEP_SUMMARY
-            echo '```text' >> $GITHUB_STEP_SUMMARY
-            tail -n 80 build_output.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit 1
-          }
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload SafeRoad AI APK Artifact
         uses: actions/upload-artifact@v4
@@ -53,3 +51,17 @@ jobs:
           name: SafeRoadAI-debug.apk
           path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
+      - name: Create GitHub Release (If tagged or dispatch)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          name: SafeRoad AI Standalone App ${{ github.ref_name }}
+          body: |
+            ### SafeRoad AI Standalone Mobile App (Android APK)
+            - **100% Offline**: Runs with no PC, no server, and no Wi-Fi.
+            - **On-Device AI**: Computer vision road damage detection.
+            - **Continuous GPS**: Real-time road hazard tracking.
+          draft: false
+          prerelease: false
