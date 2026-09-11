@@ -46,7 +46,12 @@ jobs:
       - name: Build Android Debug APK
         run: |
           cd frontend/android
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle_output.log || {
+            echo "====================== GRADLE ERROR LOG ======================"
+            tail -n 120 /tmp/gradle_output.log
+            echo "=============================================================="
+            exit 1
+          }
 
       - name: List Generated APK Files
         run: |
