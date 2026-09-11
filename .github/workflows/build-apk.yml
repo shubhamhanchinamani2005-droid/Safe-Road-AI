@@ -26,6 +26,16 @@ jobs:
         run: |
           chmod +x frontend/android/gradlew
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Frontend Dependencies (Provides Capacitor Android core)
+        run: |
+          cd frontend
+          npm install --legacy-peer-deps
+
       - name: Build Android Debug APK
         run: |
           cd frontend/android
