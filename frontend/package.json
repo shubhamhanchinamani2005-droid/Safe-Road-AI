@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cap:copy": "cap copy android",
+    "cap:update": "cap update android"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.1",
